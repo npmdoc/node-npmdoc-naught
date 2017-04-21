@@ -1,0 +1,397 @@
+<html><head></head><body><div class="apidocDiv">
+<style>
+/*csslint
+*/
+.apidocDiv {
+    background: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+}
+.apidocDiv a[href] {
+    color: #33f;
+    font-weight: bold;
+    text-decoration: none;
+}
+.apidocDiv a[href]:hover {
+    text-decoration: underline;
+}
+.apidocCodeCommentSpan {
+    background: #bbf;
+    color: #000;
+    display: block;
+}
+.apidocCodeKeywordSpan {
+    color: #d00;
+    font-weight: bold;
+}
+.apidocCodePre {
+    background: #eef;
+    border: 1px solid;
+    color: #777;
+    padding: 5px;
+    white-space: pre-wrap;
+}
+.apidocFooterDiv {
+    margin-top: 20px;
+    text-align: center;
+}
+.apidocModuleLi {
+    margin-top: 10px;
+}
+.apidocSectionDiv {
+    border-top: 1px solid;
+    margin-top: 20px;
+}
+.apidocSignatureSpan {
+    color: #777;
+    font-weight: bold;
+}
+</style>
+<h1>api documentation for
+    <a>naught (v1.6.0)</a>
+</h1>
+<h4>zero downtime deployment for your node.js server</h4>
+<div class="apidocSectionDiv"><a href="#apidoc.tableOfContents" id="apidoc.tableOfContents"><h1>table of contents</h1></a><ol>
+
+    <li class="apidocModuleLi"><a href="#apidoc.module.naught">module naught</a><ol>
+
+        <li>
+
+            <span class="apidocSignatureSpan">object <span class="apidocSignatureSpan">naught.</span>daemon</span>
+
+        </li>
+
+        <li>
+
+            <span class="apidocSignatureSpan">object <span class="apidocSignatureSpan">naught.</span>json_socket</span>
+
+        </li>
+
+    </ol></li>
+
+    <li class="apidocModuleLi"><a href="#apidoc.module.naught.daemon">module naught.daemon</a><ol>
+
+        <li>
+
+            <a class="apidocElementLiA" href="#apidoc.element.naught.daemon.start">
+            function <span class="apidocSignatureSpan">naught.daemon.</span>start
+            <span class="apidocSignatureSpan">(argv)</span>
+            </a>
+
+        </li>
+
+    </ol></li>
+
+    <li class="apidocModuleLi"><a href="#apidoc.module.naught.json_socket">module naught.json_socket</a><ol>
+
+        <li>
+
+            <a class="apidocElementLiA" href="#apidoc.element.naught.json_socket.listen">
+            function <span class="apidocSignatureSpan">naught.json_socket.</span>listen
+            <span class="apidocSignatureSpan">(socket, onMessage)</span>
+            </a>
+
+        </li>
+
+        <li>
+
+            <a class="apidocElementLiA" href="#apidoc.element.naught.json_socket.send">
+            function <span class="apidocSignatureSpan">naught.json_socket.</span>send
+            <span class="apidocSignatureSpan">(socket, object)</span>
+            </a>
+
+        </li>
+
+    </ol></li>
+
+</ol></div>
+
+<div class="apidocSectionDiv">
+<h1><a href="#apidoc.module.naught" id="apidoc.module.naught">module naught</a></h1>
+
+
+
+
+
+</div>
+
+<div class="apidocSectionDiv">
+<h1><a href="#apidoc.module.naught.daemon" id="apidoc.module.naught.daemon">module naught.daemon</a></h1>
+
+
+    <h2>
+        <a href="#apidoc.element.naught.daemon.start" id="apidoc.element.naught.daemon.start">
+        function <span class="apidocSignatureSpan">naught.daemon.</span>start
+        <span class="apidocSignatureSpan">(argv)</span>
+        </a>
+    </h2>
+    <ul>
+    <li>description and source-code<pre class="apidocCodePre">function startDaemon(argv) {
+  var workerCount = parseInt(argv.shift(), 10);
+  var socketPath = argv.shift();
+  var logNaughtPath = argv.shift();
+  var logStderrPath = argv.shift();
+  var logStdoutPath = argv.shift();
+  var maxLogSize = parseInt(argv.shift(), 10);
+  var script = argv.shift();
+  var nodeArgsStr = argv.shift();
+  var pidFile = argv.shift();
+
+  var naughtLog = null;
+  var stderrLog = null;
+  var stdoutLog = null;
+
+  var naughtLogBehavior = null;
+  var stderrBehavior = null;
+  var stdoutBehavior = null;
+
+  var socket = null;
+  var master = null;
+  var server = null;
+
+  fs.writeFile(pidFile, process.pid, function(){
+    createLogsAndIpcServer(function(err) {
+      if (err) {
+        processSend({event: 'Error', value: err.message});
+        return;
+      }
+
+      process.on('SIGHUP', function() {
+        handleSocketMessage({
+          action: 'NaughtDeploy',
+          newWorkerCount: 0,
+          environment: {},
+          timeout: null,
+          cwd: null,
+        });
+      });
+
+      process.on('SIGTERM', function() {
+        handleSocketMessage({ action: 'NaughtShutdown' });
+      });
+
+      process.on('SIGINT', function() {
+        handleSocketMessage({ action: 'NaughtShutdown' });
+      });
+
+      processSend({event: 'IpcListening'});
+      spawnMaster();
+    });
+  });
+  function maybeCreateLog(logPath, cb) {
+    // special case /dev/null - disable logging altogether
+    if (logPath === '/dev/null') {
+      cb(null, {
+        behavior: 'ignore',
+        log: null,
+      });
+    } else if (logPath === '-') {
+      cb(null, {
+        behavior: 'inherit',
+        log: null,
+      });
+    } else {
+      createLog(logPath, maxLogSize, function(err, logStream) {
+        if (err) return cb(err);
+        cb(null, {
+          behavior: 'pipe',
+          log: logStream,
+        });
+      });
+    }
+  }
+
+  function createLogs(cb) {
+    var pend = new Pend();
+    pend.go(function(cb) {
+      maybeCreateLog(logNaughtPath, function(err, results) {
+        naughtLog = results.log;
+        naughtLogBehavior = results.behavior;
+        cb(err);
+      });
+    });
+    pend.go(function(cb) {
+      maybeCreateLog(logStderrPath, function(err, results) {
+        stderrLog = results.log;
+        stderrBehavior = results.behavior;
+        cb(err);
+      });
+    });
+    pend.go(function(cb) {
+      maybeCreateLog(logStdoutPath, function(err, results) {
+        stdoutLog = results.log;
+        stdoutBehavior = results.behavior;
+        cb(err);
+      });
+    });
+    pend.wait(function(err) {
+      if (err) return cb(err);
+
+      if (naughtLogBehavior === 'inherit') {
+        naughtLog = process.stderr;
+      }
+
+      if (stderrBehavior === 'pipe') {
+        stderrLog.on('error', function(err) {
+          log("Error writing to " + logStderrPath + ": " + err.stack + "\n");
+        });
+      }
+      if (stdoutBehavior === 'pipe') {
+        stdoutLog.on('error', function(err) {
+          log("Error writing to " + logStdoutPath + ": " + err.stack + "\n");
+        });
+      }
+      if (naughtLogBehavior === 'pipe') {
+        naughtLog.on('error', function(err){
+          process.stderr.write("Error writing to " + logNaughtPath + ": " + err.stack + "\n");
+        });
+      }
+      cb();
+    });
+  }
+
+  function log(str) {
+    if (naughtLog) naughtLog.write(str);
+  }
+
+  function workerCountsFromMsg(counts) {
+    return "booting: " + counts.booting +
+      ", online: " + counts.online +
+      ", dying: " + counts.dying +
+      ", new_online: " + counts.new_online;
+  }
+
+  function onMessage(message) {
+    if (naughtLog) {
+      var str = message.event + ".";
+      if (message.count) str += " " + workerCountsFromMsg(message.count);
+      naughtLog.write(str + "\n");
+    }
+    if (socket) jsonSocket.send(socket, message);
+    processSend(message);
+  }
+
+  function createLogsAndIpcServer(cb) {
+    var pend = new Pend();
+    createLogs(pend.hold());
+    mkdirp(path.dirname(socketPath), pend.hold());
+    pend.wait(function(err) {
+      if (err) return cb(err);
+      server = net.createServer(function(newSocket){
+        if (socket != null) { ...</pre></li>
+    <li>example usage<pre class="apidocCodePre">...
+    startDaemonChild(args);
+  } else {
+    startBlockingMaster(args);
+  }
+}
+
+function startBlockingMaster(args) {
+  daemon.<span class="apidocCodeKeywordSpan">start</span>(args);
+}
+
+function startDaemonChild(args) {
+  var modulePath = path.resolve(__dirname, "start_daemon.js");
+  var child = spawn(process.execPath, [modulePath].concat(args), {
+    env: process.env,
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+...</pre></li>
+    </ul>
+
+
+</div>
+
+<div class="apidocSectionDiv">
+<h1><a href="#apidoc.module.naught.json_socket" id="apidoc.module.naught.json_socket">module naught.json_socket</a></h1>
+
+
+    <h2>
+        <a href="#apidoc.element.naught.json_socket.listen" id="apidoc.element.naught.json_socket.listen">
+        function <span class="apidocSignatureSpan">naught.json_socket.</span>listen
+        <span class="apidocSignatureSpan">(socket, onMessage)</span>
+        </a>
+    </h2>
+    <ul>
+    <li>description and source-code<pre class="apidocCodePre">function listen(socket, onMessage) {
+  socket.setEncoding('utf8');
+  var buffer = "";
+  socket.on('data', function(data){
+    buffer += data;
+    var msg;
+    while (msg = msgFromBuffer()) {
+      onMessage(msg);
+    }
+  });
+  function msgFromBuffer() {
+    var sep = buffer.indexOf("\n");
+    if (sep === -1) return null;
+    var msgLen = parseInt(buffer.substring(0, sep), 10);
+    var nextMsgStart = sep + msgLen + 1;
+    if (nextMsgStart &gt; buffer.length) {
+      return null;
+    }
+    var result = JSON.parse(buffer.substring(sep + 1, nextMsgStart));
+    buffer = buffer.substring(nextMsgStart);
+    return result;
+  }
+}</pre></li>
+    <li>example usage<pre class="apidocCodePre">...
+```
+
+Usually this is done in the `listening` event for a node server, for
+example:
+
+```js
+server = http.createServer(...);
+server.<span class="apidocCodeKeywordSpan">listen</span>(80, function () {
+  if (process.send) process.send('online');
+});
+```
+
+2. Listen to the `shutdown` message and shutdown gracefully. This message
+is emitted after there is already a newer instance of your server
+online and taking care of business:
+...</pre></li>
+    </ul>
+
+
+
+    <h2>
+        <a href="#apidoc.element.naught.json_socket.send" id="apidoc.element.naught.json_socket.send">
+        function <span class="apidocSignatureSpan">naught.json_socket.</span>send
+        <span class="apidocSignatureSpan">(socket, object)</span>
+        </a>
+    </h2>
+    <ul>
+    <li>description and source-code<pre class="apidocCodePre">function send(socket, object){
+  var strMsg = JSON.stringify(object);
+  socket.write(strMsg.length + "\n" + strMsg);
+}</pre></li>
+    <li>example usage<pre class="apidocCodePre">...
+## Usage:
+
+To use naught, your node.js server has 2 requirements.
+
+1. Once the server is fully booted and is readily accepting connections,
+
+```js
+process.<span class="apidocCodeKeywordSpan">send</span>('online');
+```
+
+Usually this is done in the `listening` event for a node server, for
+example:
+
+```js
+server = http.createServer(...);
+...</pre></li>
+    </ul>
+
+
+</div>
+
+<div class="apidocFooterDiv">
+    [ this document was created with
+    <a href="https://github.com/kaizhu256/node-utility2" target="_blank">utility2</a>
+    ]
+</div>
+</div>
+</body></html>
